@@ -1,0 +1,8 @@
+flask
+flask-cors
+sqlalchemy
+python-dotenv
+netaddr
+pytest
+jinja2
+scapy

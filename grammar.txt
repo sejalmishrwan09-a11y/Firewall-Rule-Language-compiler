@@ -1,0 +1,99 @@
+================================================================
+  FRL — Firewall Rule Language
+  Formal Grammar Specification (EBNF Notation)
+================================================================
+
+Author  : FRL Compiler Project
+Version : 3.0
+
+----------------------------------------------------------------
+NOTATION
+----------------------------------------------------------------
+  ::=       is defined as
+  |         alternation (either/or)
+  [ ... ]   optional (zero or one occurrence)
+  { ... }   repetition (zero or more occurrences)
+  ' ... '   terminal (literal keyword or symbol)
+  UPPER     token produced by the lexer (terminal symbol)
+
+----------------------------------------------------------------
+GRAMMAR PRODUCTIONS
+----------------------------------------------------------------
+
+  program      ::= { rule } EOF
+
+  rule         ::= action protocol from_clause to_clause [ port_clause ]
+
+  action       ::= 'ALLOW'
+                |  'DENY'
+
+  protocol     ::= 'TCP'
+                |  'UDP'
+                |  'ICMP'
+
+  from_clause  ::= 'FROM' address
+
+  to_clause    ::= 'TO' address
+
+  address      ::= 'ANY'
+                |  CIDR_LITERAL
+                |  IP_LITERAL
+
+  port_clause  ::= 'PORT' NUMBER
+
+----------------------------------------------------------------
+TERMINAL SYMBOLS  (produced by the Lexer)
+----------------------------------------------------------------
+
+  IP_LITERAL   ::= OCTET '.' OCTET '.' OCTET '.' OCTET
+  CIDR_LITERAL ::= IP_LITERAL '/' PREFIX
+  OCTET        ::= digit {digit}          -- value must be 0-255
+  PREFIX       ::= digit {digit}          -- value must be 0-32
+  NUMBER       ::= digit {digit}          -- port, value 1-65535
+  digit        ::= '0' | '1' | ... | '9'
+
+----------------------------------------------------------------
+CONSTRAINTS ENFORCED BY SEMANTIC ANALYSER
+(not expressible in the grammar — checked after parsing)
+----------------------------------------------------------------
+
+  1. If protocol = TCP or UDP  →  port_clause is REQUIRED
+  2. If protocol = ICMP        →  port_clause is FORBIDDEN
+  3. Each OCTET in IP_LITERAL  →  must satisfy 0 ≤ octet ≤ 255
+  4. PREFIX in CIDR_LITERAL    →  must satisfy 0 ≤ prefix ≤ 32
+  5. NUMBER in port_clause     →  must satisfy 1 ≤ port ≤ 65535
+  6. ALLOW + DENY rules with identical (proto, src, dst, port) → CONFLICT error
+  7. Rule shadowed by earlier 'FROM ANY TO ANY' rule → WARNING
+
+----------------------------------------------------------------
+EXAMPLE VALID PROGRAMS
+----------------------------------------------------------------
+
+  ALLOW TCP FROM 192.168.1.0/24 TO ANY PORT 80
+  DENY  ICMP FROM ANY TO ANY
+  ALLOW UDP FROM 10.0.0.1 TO 10.0.0.2 PORT 53
+
+----------------------------------------------------------------
+EXAMPLE INVALID PROGRAMS  (with error stage that catches them)
+----------------------------------------------------------------
+
+  ALLOW TCP FROM ANY TO ANY           -- Lexer: OK, Semantic: TCP needs PORT
+  DENY ICMP FROM ANY TO ANY PORT 80   -- Lexer: OK, Semantic: ICMP no PORT
+  ALLOW TCP FROM 999.0.0.1 TO ANY PORT 80  -- Semantic: invalid IP octet
+  ALLOW TCP FROM ANY TO ANY PORT 99999     -- Semantic: port out of range
+
+----------------------------------------------------------------
+CODEGEN BACKENDS
+----------------------------------------------------------------
+
+  Backend 1 — iptables  (classic Linux netfilter)
+    Input  : List[RuleNode] (from Parser)
+    Output : iptables -A INPUT ... -j ACCEPT|DROP  commands
+
+  Backend 2 — nftables  (modern Linux netfilter, Linux 3.13+)
+    Input  : List[RuleNode] (same input, different output)
+    Output : nftables table inet { chain input { ... } }
+
+  Both backends consume the same AST — proving the intermediate
+  representation is backend-independent.
+================================================================

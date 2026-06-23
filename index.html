@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FRLc — Firewall Rule Language Compiler</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">FR<em>L</em>c</div>
+  <div class="hbadge">Firewall Rule Language Compiler</div>
+  <div class="hbadge teal">Phase 3</div>
+  <div class="api-status">
+    <div class="status-dot" id="apiDot"></div>
+    <span id="apiStatus">connecting...</span>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- ══ Stat bar ══════════════════════════════════════════════ -->
+  <div class="card full">
+    <div class="card-header">
+      <div class="card-icon icon-green"><i class="fa-solid fa-shield-halved"></i></div>
+      <div class="card-title">Firewall Status</div>
+      <span style="margin-left:auto;font-size:11px;color:var(--muted)" id="uptimeLabel">uptime: —</span>
+    </div>
+    <div class="stat-row">
+      <div class="stat-box"><div class="stat-label">Active Rules</div><div class="stat-value sv-blue" id="statRules">0</div></div>
+      <div class="stat-box"><div class="stat-label">Packets Evaluated</div><div class="stat-value sv-amber" id="statTotal">0</div></div>
+      <div class="stat-box"><div class="stat-label">Allowed</div><div class="stat-value sv-green" id="statAllowed">0</div></div>
+      <div class="stat-box"><div class="stat-label">Denied</div><div class="stat-value sv-red" id="statDenied">0</div></div>
+      <div class="stat-box"><div class="stat-label">API Uptime</div><div class="stat-value sv-purple" id="statUptime">—</div></div>
+    </div>
+  </div>
+
+  <!-- ══ Rule Editor ═══════════════════════════════════════════ -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon icon-amber"><i class="fa-solid fa-code"></i></div>
+      <div class="card-title">Rule Editor</div>
+      <div style="margin-left:auto;display:flex;gap:6px;font-size:10px;font-weight:600;letter-spacing:.06em;">
+        <span style="color:var(--amber)">LEXER</span><span style="color:var(--muted)">→</span>
+        <span style="color:var(--blue)">PARSER</span><span style="color:var(--muted)">→</span>
+        <span style="color:var(--teal)">ANALYSER</span><span style="color:var(--muted)">→</span>
+        <span style="color:var(--green)">CODEGEN</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <label class="fl">FRL source — tokens highlighted as you type</label>
+      <div class="editor-wrap">
+        <div class="editor-inner">
+          <div class="gutter" id="gutter"></div>
+          <div id="highlight" aria-hidden="true"></div>
+          <textarea id="rulesInput" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">ALLOW TCP FROM 192.168.1.0/24 TO ANY PORT 80
+ALLOW UDP FROM 192.168.1.0/24 TO ANY PORT 53
+DENY ICMP FROM ANY TO ANY</textarea>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-amber" onclick="compileRules()">
+          <i class="fa-solid fa-play"></i> Compile Rules
+        </button>
+      </div>
+      <div id="compileResult"></div>
+      <div id="ruleBreakdown" class="rule-breakdown"></div>
+      <ul  id="warnList" class="warn-list"></ul>
+    </div>
+  </div>
+
+  <!-- ══ AST Viewer — NEW ══════════════════════════════════════ -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon icon-purple"><i class="fa-solid fa-sitemap"></i></div>
+      <div class="card-title">Abstract Syntax Tree</div>
+      <span style="margin-left:auto;font-size:10px;color:var(--muted)">Parser output — compile to populate</span>
+    </div>
+    <div class="card-body">
+      <div style="font-size:10px;color:var(--muted);margin-bottom:10px;line-height:1.7">
+        Each node in this tree is a typed object built by the parser.
+        The semantic analyser and both code generators walk this tree recursively.
+      </div>
+      <pre id="astOutput" style="min-height:140px;color:var(--purple);font-size:11px">Compile rules to see the AST here.</pre>
+    </div>
+  </div>
+
+  <!-- ══ Packet Simulator ══════════════════════════════════════ -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon icon-teal"><i class="fa-solid fa-paper-plane"></i></div>
+      <div class="card-title">Packet Simulator</div>
+    </div>
+    <div class="card-body">
+      <div class="field-row">
+        <div class="field">
+          <label class="fl">Protocol</label>
+          <select id="simProtocol" onchange="handleProtoChange()">
+            <option>TCP</option><option>UDP</option><option>ICMP</option>
+          </select>
+        </div>
+        <div class="field" id="portField">
+          <label class="fl">Destination Port</label>
+          <input type="number" id="simPort" value="80" min="1" max="65535">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label class="fl">Source IP</label>
+          <input type="text" id="simSource" value="192.168.1.55">
+        </div>
+        <div class="field">
+          <label class="fl">Destination IP</label>
+          <input type="text" id="simDest" value="10.0.0.5">
+        </div>
+      </div>
+      <button class="btn btn-teal" onclick="simulatePacket()">
+        <i class="fa-solid fa-bolt"></i> Simulate Packet
+      </button>
+      <div class="sim-result" id="simResult">
+        <div class="sim-decision" id="simDecision">—</div>
+        <div class="sim-meta"     id="simMeta"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Codegen Output — tabbed iptables + nftables ═══════════ -->
+  <div class="card full">
+    <div class="card-header">
+      <div class="card-icon icon-blue"><i class="fa-brands fa-linux"></i></div>
+      <div class="card-title">Codegen Output — Two Backends from the Same AST</div>
+    </div>
+    <div class="card-body">
+      <!-- Backend selector tabs -->
+      <div class="backend-tabs">
+        <button class="btab active" id="btab-ipt" onclick="switchBackend('ipt')">
+          <i class="fa-solid fa-terminal"></i> iptables
+        </button>
+        <button class="btab" id="btab-nft" onclick="switchBackend('nft')">
+          <i class="fa-solid fa-fire"></i> nftables
+        </button>
+      </div>
+
+      <!-- iptables panel -->
+      <div id="panel-ipt">
+        <div class="btn-row">
+          <button class="btn btn-ghost" onclick="loadIptables()"><i class="fa-solid fa-rotate"></i> Generate</button>
+          <button class="btn btn-green" onclick="exportScript('ipt')"><i class="fa-solid fa-download"></i> Export .sh</button>
+          <button class="btn btn-ghost" onclick="copyOutput('iptablesOutput')"><i class="fa-solid fa-copy"></i> Copy</button>
+        </div>
+        <pre id="iptablesOutput">Click Generate after compiling rules.</pre>
+      </div>
+
+      <!-- nftables panel -->
+      <div id="panel-nft" style="display:none">
+        <div class="btn-row">
+          <button class="btn btn-ghost" onclick="loadNftables()"><i class="fa-solid fa-rotate"></i> Generate</button>
+          <button class="btn btn-green" onclick="exportScript('nft')"><i class="fa-solid fa-download"></i> Export .nft</button>
+          <button class="btn btn-ghost" onclick="copyOutput('nftablesOutput')"><i class="fa-solid fa-copy"></i> Copy</button>
+        </div>
+        <pre id="nftablesOutput">Click Generate after compiling rules.</pre>
+      </div>
+
+      <div id="exportMsg"></div>
+    </div>
+  </div>
+
+  <!-- ══ Charts ════════════════════════════════════════════════ -->
+  <div class="card full">
+    <div class="card-header">
+      <div class="card-icon icon-purple"><i class="fa-solid fa-chart-pie"></i></div>
+      <div class="card-title">Traffic Analytics</div>
+    </div>
+    <div class="chart-grid">
+      <div class="donut-wrap">
+        <canvas id="donutChart" width="180" height="180"></canvas>
+        <div class="donut-legend">
+          <div class="dl-row"><div class="dl-dot" style="background:var(--green)"></div><span style="color:var(--muted)">Allowed</span><span id="donutAllowPct" style="margin-left:auto;color:var(--green);font-weight:600">—</span></div>
+          <div class="dl-row"><div class="dl-dot" style="background:var(--red)"></div><span style="color:var(--muted)">Denied</span><span id="donutDenyPct"  style="margin-left:auto;color:var(--red);font-weight:600">—</span></div>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px;letter-spacing:.06em;text-transform:uppercase;font-weight:600">Rule hit counts</div>
+        <canvas id="barChart" height="140"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Active Rules ══════════════════════════════════════════ -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon icon-blue"><i class="fa-solid fa-list-check"></i></div>
+      <div class="card-title">Active Rules</div>
+    </div>
+    <div class="card-body">
+      <div class="refresh-row">
+        <span class="ts" id="rulesTs">—</span>
+        <button class="btn btn-ghost" onclick="loadRules()"><i class="fa-solid fa-rotate"></i> Refresh</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th>Action</th><th>Protocol</th><th>Source</th><th>Destination</th><th>Port</th></tr></thead>
+          <tbody id="rulesBody"><tr><td colspan="6" style="color:var(--muted);text-align:center">No rules compiled yet</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Rule Hit Stats ════════════════════════════════════════ -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon icon-amber"><i class="fa-solid fa-chart-bar"></i></div>
+      <div class="card-title">Rule Hit Statistics</div>
+    </div>
+    <div class="card-body">
+      <div class="refresh-row">
+        <span class="ts" id="statsTs">—</span>
+        <button class="btn btn-ghost" onclick="loadStats()"><i class="fa-solid fa-rotate"></i> Refresh</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Rule</th><th>Hits</th></tr></thead>
+          <tbody id="statsBody"><tr><td colspan="2" style="color:var(--muted);text-align:center">No data</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Packet Logs with Search ═══════════════════════════════ -->
+  <div class="card full">
+    <div class="card-header">
+      <div class="card-icon icon-red"><i class="fa-solid fa-scroll"></i></div>
+      <div class="card-title">Packet Logs</div>
+    </div>
+    <div class="card-body">
+      <div class="search-wrap">
+        <input type="text" id="logSearch" placeholder="Search by IP, protocol, rule..." oninput="renderLogs()">
+        <span class="log-count" id="logCount">0 entries</span>
+      </div>
+      <div class="filter-pills">
+        <span class="pill active-all" id="pill-all"   onclick="setFilter('ALL')">All</span>
+        <span class="pill"            id="pill-ALLOW" onclick="setFilter('ALLOW')">Allow</span>
+        <span class="pill"            id="pill-DENY"  onclick="setFilter('DENY')">Deny</span>
+        <span class="pill"            id="pill-TCP"   onclick="setFilter('TCP')">TCP</span>
+        <span class="pill"            id="pill-UDP"   onclick="setFilter('UDP')">UDP</span>
+        <span class="pill"            id="pill-ICMP"  onclick="setFilter('ICMP')">ICMP</span>
+        <span style="margin-left:auto">
+          <button class="btn btn-ghost" onclick="loadLogs()"><i class="fa-solid fa-rotate"></i> Refresh</button>
+        </span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Protocol</th><th>Source</th><th>Destination</th><th>Port</th><th>Decision</th><th>Matched Rule</th></tr></thead>
+          <tbody id="logsBody"><tr><td colspan="7" style="color:var(--muted);text-align:center">No logs yet</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API = "http://127.0.0.1:8000";
+let barChart, donutChart, allLogs = [], activeFilter = "ALL";
+let currentBackend = "ipt";
+
+// ── API health check ──────────────────────────────────────────────
+async function checkAPI() {
+  try {
+    const data = await apiFetch("/health");
+    document.getElementById("apiDot").style.cssText    = "background:var(--green);box-shadow:0 0 6px var(--green)";
+    document.getElementById("apiStatus").textContent    = "API online";
+    document.getElementById("statUptime").textContent   = data.uptime || "—";
+    document.getElementById("uptimeLabel").textContent  = "uptime: " + data.uptime;
+    document.getElementById("statRules").textContent    = data.active_rules;
+    document.getElementById("statTotal").textContent    = data.packets_evaluated;
+    document.getElementById("statAllowed").textContent  = data.allowed;
+    document.getElementById("statDenied").textContent   = data.denied;
+    updateDonut(data.allowed, data.denied);
+  } catch {
+    document.getElementById("apiDot").style.cssText   = "background:var(--red);box-shadow:0 0 6px var(--red)";
+    document.getElementById("apiStatus").textContent  = "API offline — run uvicorn api_server:app --reload";
+  }
+}
+
+async function apiFetch(path, opts) {
+  const res = await fetch(API + path, opts);
+  return res.json();
+}
+
+// ── Syntax highlighting ───────────────────────────────────────────
+function highlightFRL(text) {
+  let safe = text.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  return safe.split('\n').map(line => {
+    const ci = line.indexOf('#');
+    let code = ci === -1 ? line : line.slice(0, ci);
+    let comment = ci === -1 ? '' : line.slice(ci);
+    [
+      {re:/\b(ALLOW)\b/g, cls:'hl-action-allow'},
+      {re:/\b(DENY)\b/g,  cls:'hl-action-deny'},
+      {re:/\b(TCP|UDP|ICMP|ANY)\b/g, cls:'hl-proto'},
+      {re:/\b(FROM|TO|PORT)\b/g, cls:'hl-kw'},
+      {re:/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:\/\d{1,2})?)/g, cls:'hl-ip'},
+      {re:/\b(\d+)\b/g, cls:'hl-port-num'},
+    ].forEach(({re,cls}) => { code = code.replace(re,`<span class="${cls}">$1</span>`); });
+    if (comment) comment = `<span class="hl-comment">${comment}</span>`;
+    return code + comment;
+  }).join('\n');
+}
+
+function syncHighlight() {
+  const ta=document.getElementById('rulesInput'), hl=document.getElementById('highlight'), gut=document.getElementById('gutter');
+  hl.innerHTML = highlightFRL(ta.value) + '\n';
+  hl.scrollTop = ta.scrollTop; hl.scrollLeft = ta.scrollLeft;
+  const n = ta.value.split('\n').length;
+  gut.innerHTML = Array.from({length:n},(_,i)=>`<span class="gutter-line">${i+1}</span>`).join('');
+  gut.scrollTop = ta.scrollTop;
+}
+
+document.getElementById('rulesInput').addEventListener('input',  syncHighlight);
+document.getElementById('rulesInput').addEventListener('scroll', syncHighlight);
+document.getElementById('rulesInput').addEventListener('keydown', e => {
+  if (e.key==='Tab') { e.preventDefault(); const ta=e.target,s=ta.selectionStart; ta.value=ta.value.slice(0,s)+'  '+ta.value.slice(ta.selectionEnd); ta.selectionStart=ta.selectionEnd=s+2; syncHighlight(); }
+});
+
+// ── Compile ───────────────────────────────────────────────────────
+async function compileRules() {
+  const rules=document.getElementById('rulesInput').value.trim();
+  const resEl=document.getElementById('compileResult'), brkEl=document.getElementById('ruleBreakdown'), warnEl=document.getElementById('warnList');
+  resEl.innerHTML=''; brkEl.innerHTML=''; warnEl.innerHTML='';
+  if (!rules) return;
+  try {
+    const data = await apiFetch('/compile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rules})});
+    if (data.status==='success') {
+      resEl.innerHTML=`<div class="alert alert-success"><span class="alert-icon"><i class="fa-solid fa-circle-check"></i></span><div>${data.rule_count} rule${data.rule_count!==1?'s':''} compiled — lexed, parsed, and analysed.</div></div>`;
+      brkEl.innerHTML=`<span class="rb rb-total">${data.rule_count} total</span><span class="rb rb-allow">${data.allow_count} ALLOW</span><span class="rb rb-deny">${data.deny_count} DENY</span>`;
+      (data.warnings||[]).forEach(w=>warnEl.innerHTML+=`<li class="w-shadow"><i class="fa-solid fa-triangle-exclamation"></i>${esc(w)}</li>`);
+      (data.conflicts||[]).forEach(c=>warnEl.innerHTML+=`<li class="w-conflict"><i class="fa-solid fa-circle-xmark"></i>${esc(c)}</li>`);
+
+      // Load AST automatically after compile
+      loadAST();
+    } else {
+      resEl.innerHTML=`<div class="alert alert-error"><span class="alert-icon"><i class="fa-solid fa-circle-xmark"></i></span><div>${esc(data.message)}</div></div>`;
+    }
+    loadRules(); loadStats(); loadLogs(); checkAPI();
+  } catch {
+    resEl.innerHTML=`<div class="alert alert-error"><span class="alert-icon"><i class="fa-solid fa-plug-circle-xmark"></i></span>Cannot reach API — is uvicorn running?</div>`;
+  }
+}
+
+// ── AST loader ────────────────────────────────────────────────────
+async function loadAST() {
+  try {
+    const data = await apiFetch('/ast');
+    document.getElementById('astOutput').textContent = data.ast || 'No AST available.';
+  } catch {
+    document.getElementById('astOutput').textContent = 'Could not load AST.';
+  }
+}
+
+// ── Packet simulator ──────────────────────────────────────────────
+function handleProtoChange() {
+  const proto=document.getElementById('simProtocol').value;
+  const pf=document.getElementById('portField');
+  pf.style.opacity=proto==='ICMP'?'0.35':'1';
+  pf.style.pointerEvents=proto==='ICMP'?'none':'auto';
+  if (proto==='ICMP') document.getElementById('simPort').value='';
+}
+
+async function simulatePacket() {
+  const protocol=document.getElementById('simProtocol').value;
+  const source=document.getElementById('simSource').value.trim();
+  const destination=document.getElementById('simDest').value.trim();
+  const portRaw=document.getElementById('simPort').value;
+  const port=(protocol!=='ICMP'&&portRaw)?parseInt(portRaw):null;
+  const resultEl=document.getElementById('simResult'), decEl=document.getElementById('simDecision'), metaEl=document.getElementById('simMeta');
+  try {
+    const data=await apiFetch('/simulate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({protocol,source,destination,port})});
+    if (data.error) { decEl.textContent='ERROR'; decEl.className='sim-decision deny'; metaEl.textContent=data.error; }
+    else {
+      const allow=data.decision==='ALLOW';
+      decEl.textContent=data.decision; decEl.className='sim-decision '+(allow?'allow':'deny');
+      metaEl.innerHTML=`<b>Packet:</b> ${esc(protocol)} ${esc(source)} → ${esc(destination)}${port?' port '+port:''}<br><b>Matched rule:</b> ${esc(data.matched_rule)}<br><b>Processing time:</b> ${data.processing_time_ms} ms`;
+      resultEl.classList.remove('flash-allow','flash-deny'); void resultEl.offsetWidth;
+      resultEl.classList.add(allow?'flash-allow':'flash-deny');
+    }
+    resultEl.classList.add('show'); loadLogs(); loadStats(); checkAPI();
+  } catch { decEl.textContent='ERROR'; decEl.className='sim-decision deny'; metaEl.textContent='Cannot reach API.'; resultEl.classList.add('show'); }
+}
+
+// ── Backend tabs ──────────────────────────────────────────────────
+function switchBackend(b) {
+  currentBackend = b;
+  document.getElementById('panel-ipt').style.display = b==='ipt' ? 'block' : 'none';
+  document.getElementById('panel-nft').style.display = b==='nft' ? 'block' : 'none';
+  document.getElementById('btab-ipt').classList.toggle('active', b==='ipt');
+  document.getElementById('btab-nft').classList.toggle('active', b==='nft');
+}
+
+// ── iptables codegen ──────────────────────────────────────────────
+async function loadIptables() {
+  try {
+    const data=await apiFetch('/iptables');
+    document.getElementById('iptablesOutput').textContent=data.commands&&data.commands.length?data.commands.join('\n'):'# No rules compiled yet';
+  } catch { document.getElementById('iptablesOutput').textContent='# Cannot reach API'; }
+}
+
+// ── nftables codegen ──────────────────────────────────────────────
+async function loadNftables() {
+  try {
+    const data=await apiFetch('/nftables');
+    document.getElementById('nftablesOutput').textContent=data.ruleset||'# No rules compiled yet';
+  } catch { document.getElementById('nftablesOutput').textContent='# Cannot reach API'; }
+}
+
+// ── Export ────────────────────────────────────────────────────────
+function exportScript(backend) {
+  const isNft = backend==='nft';
+  const content=document.getElementById(isNft?'nftablesOutput':'iptablesOutput').textContent;
+  if (!content||content.startsWith('#')) { showExportMsg('Generate rules first, then export.',false); return; }
+  const ts=new Date().toISOString();
+  let script, filename;
+  if (isNft) {
+    script=content; filename='firewall_rules.nft';
+  } else {
+    script=['#!/bin/bash','# Generated by FRLc — Firewall Rule Language Compiler',`# Exported: ${ts}`,'','# Flush existing rules','iptables -F','iptables -X','','# Default policies','iptables -P INPUT DROP','iptables -P FORWARD DROP','iptables -P OUTPUT ACCEPT','','# Allow established connections','iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT','','# Loopback','iptables -A INPUT -i lo -j ACCEPT','','# ── Compiled FRL rules ──',content,'','echo "Firewall rules applied."'].join('\n');
+    filename='firewall_rules.sh';
+  }
+  const blob=new Blob([script],{type:'text/plain'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download=filename; a.click(); URL.revokeObjectURL(url);
+  showExportMsg(`${filename} downloaded.`,true);
+}
+
+function copyOutput(id) {
+  navigator.clipboard.writeText(document.getElementById(id).textContent)
+    .then(()=>showExportMsg('Copied to clipboard.',true))
+    .catch(()=>showExportMsg('Copy failed.',false));
+}
+
+function showExportMsg(msg,ok) {
+  const el=document.getElementById('exportMsg');
+  el.innerHTML=`<div class="alert alert-${ok?'success':'info'}" style="margin-top:10px"><span class="alert-icon"><i class="fa-solid fa-${ok?'circle-check':'circle-info'}"></i></span><div>${esc(msg)}</div></div>`;
+  setTimeout(()=>el.innerHTML='',4000);
+}
+
+// ── Load rules table ──────────────────────────────────────────────
+async function loadRules() {
+  try {
+    const data=await apiFetch('/rules'); const tbody=document.getElementById('rulesBody'); tbody.innerHTML='';
+    if (!data.rules||!data.rules.length) { tbody.innerHTML=`<tr><td colspan="6" style="color:var(--muted);text-align:center">No rules compiled yet</td></tr>`; return; }
+    data.rules.forEach((rule,i)=>{
+      const get=k=>{const m=rule.match(new RegExp(k+'=([^,)]+)'));return m?m[1].trim():'—';};
+      const action=get('Action'); const row=document.createElement('tr');
+      row.innerHTML=`<td>${i+1}</td><td><span class="badge badge-${action==='ALLOW'?'allow':'deny'}">${action}</span></td><td>${get('Protocol')}</td><td>${get('Source')}</td><td>${get('Destination')}</td><td>${get('Port')}</td>`;
+      tbody.appendChild(row);
+    });
+    document.getElementById('rulesTs').textContent='Updated '+now();
+    document.getElementById('statRules').textContent=data.rules.length;
+  } catch {}
+}
+
+// ── Load stats ────────────────────────────────────────────────────
+async function loadStats() {
+  try {
+    const data=await apiFetch('/stats'); const tbody=document.getElementById('statsBody'); tbody.innerHTML='';
+    const labels=[],values=[];
+    if (!Object.keys(data).length) { tbody.innerHTML=`<tr><td colspan="2" style="color:var(--muted);text-align:center">No hits yet</td></tr>`; }
+    else { Object.entries(data).forEach(([rule,hits],i)=>{ const row=document.createElement('tr'); row.innerHTML=`<td style="font-size:11px;color:var(--muted)">${esc(rule)}</td><td>${hits}</td>`; tbody.appendChild(row); labels.push('Rule '+(i+1)); values.push(hits); }); }
+    document.getElementById('statsTs').textContent='Updated '+now();
+    renderBarChart(labels,values);
+  } catch {}
+}
+
+// ── Load logs ─────────────────────────────────────────────────────
+async function loadLogs() { try { allLogs=await apiFetch('/logs'); renderLogs(); checkAPI(); } catch {} }
+
+function setFilter(f) {
+  activeFilter=f;
+  document.querySelectorAll('.pill').forEach(p=>{ p.className='pill'; if(p.id==='pill-'+(f==='ALL'?'all':f)) { p.classList.add(f==='ALL'?'active-all':f==='ALLOW'?'active-allow':f==='DENY'?'active-deny':'active-all'); } });
+  renderLogs();
+}
+
+function renderLogs() {
+  const tbody=document.getElementById('logsBody'), query=document.getElementById('logSearch').value.toLowerCase();
+  let rows=[...allLogs].reverse();
+  if (activeFilter!=='ALL') rows=rows.filter(l=>l.decision===activeFilter||l.protocol===activeFilter);
+  if (query) rows=rows.filter(l=>[l.protocol,l.source,l.destination,l.decision,l.matched_rule,String(l.port||'')].some(v=>v&&v.toLowerCase().includes(query)));
+  document.getElementById('logCount').textContent=`${rows.length} of ${allLogs.length} entries`;
+  tbody.innerHTML='';
+  if (!rows.length) { tbody.innerHTML=`<tr><td colspan="7" style="color:var(--muted);text-align:center">${allLogs.length?'No logs match filter':'No logs yet'}</td></tr>`; return; }
+  let allowed=0,denied=0;
+  rows.forEach(log=>{ const isAllow=log.decision==='ALLOW'; if(isAllow)allowed++;else denied++; const row=document.createElement('tr'); row.innerHTML=`<td>${esc(log.time||'—')}</td><td>${esc(log.protocol)}</td><td>${esc(log.source)}</td><td>${esc(log.destination)}</td><td>${log.port??'—'}</td><td><span class="badge badge-${isAllow?'allow':'deny'}">${log.decision}</span></td><td style="color:var(--muted);font-size:11px">${esc(log.matched_rule||'default-deny')}</td>`; tbody.appendChild(row); });
+  document.getElementById('statAllowed').textContent=allowed; document.getElementById('statDenied').textContent=denied; document.getElementById('statTotal').textContent=allLogs.length;
+}
+
+// ── Charts ────────────────────────────────────────────────────────
+function updateDonut(allowed,denied) {
+  const total=allowed+denied, ap=total?Math.round(allowed/total*100):0;
+  document.getElementById('donutAllowPct').textContent=ap+'%';
+  document.getElementById('donutDenyPct').textContent=(100-ap)+'%';
+  const ctx=document.getElementById('donutChart');
+  if (donutChart) donutChart.destroy();
+  donutChart=new Chart(ctx,{type:'doughnut',data:{labels:['Allowed','Denied'],datasets:[{data:total?[allowed,denied]:[1,0],backgroundColor:total?['#4ade80','#f5626a']:['#2a3050','#2a3050'],borderWidth:0,hoverOffset:4}]},options:{cutout:'72%',plugins:{legend:{display:false},tooltip:{enabled:!!total}},animation:{animateRotate:true,duration:600}}});
+}
+
+function renderBarChart(labels,values) {
+  const ctx=document.getElementById('barChart');
+  if (barChart) barChart.destroy();
+  barChart=new Chart(ctx,{type:'bar',data:{labels,datasets:[{label:'Hits',data:values,backgroundColor:['#f5a623','#2dd4b8','#7b9ef5','#f5626a','#4ade80','#c084fc'],borderRadius:5,borderSkipped:false}]},options:{plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#4a5070'},grid:{color:'rgba(255,255,255,0.04)'}},y:{beginAtZero:true,ticks:{color:'#4a5070',precision:0},grid:{color:'rgba(255,255,255,0.04)'}}}}});
+}
+
+// ── Utils ─────────────────────────────────────────────────────────
+function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function now(){return new Date().toLocaleTimeString();}
+
+// ── Auto refresh ──────────────────────────────────────────────────
+setInterval(()=>{loadLogs();loadStats();checkAPI();},3000);
+
+// ── Init ──────────────────────────────────────────────────────────
+syncHighlight(); handleProtoChange(); checkAPI(); updateDonut(0,0);
+</script>
+
+<style>
+.backend-tabs{display:flex;gap:6px;margin-bottom:12px;}
+.btab{padding:7px 16px;border-radius:6px;border:1px solid var(--border2);background:var(--bg4);color:var(--muted);font-family:var(--mono);font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:7px;}
+.btab:hover{color:var(--text);}
+.btab.active{background:var(--blue-d);color:var(--blue);border-color:rgba(123,158,245,.35);}
+</style>
+</body>
+</html>
